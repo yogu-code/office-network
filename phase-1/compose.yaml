@@ -1,0 +1,24 @@
+services:
+  pc1:
+    image: officepc
+    container_name: pc1
+    hostname: pc1
+    networks:
+      officelan:
+        ipv4_address: 192.168.10.11
+
+  pc2:
+    image: officepc
+    container_name: pc2
+    hostname: pc2
+    networks:
+      officelan:
+        ipv4_address: 192.168.10.12
+
+networks:
+  officelan:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 192.168.10.0/24
