@@ -1,0 +1,174 @@
+name: office-network
+
+# Private office network lab:
+#   uplink  192.168.99.0/24  router <-> firewall
+#   staff   192.168.10.0/24  pc1, pc2 (behind the firewall)
+#   servers 192.168.20.0/24  web (nginx) and dns (dnsmasq)
+#
+# Routes, DNS settings and firewall rules are set in each container's
+# command, so they come back every time the lab starts or restarts.
+
+networks:
+  uplink:
+    name: uplink
+    internal: true
+    ipam:
+      config:
+        - subnet: 192.168.99.0/24
+          gateway: 192.168.99.254
+  staff:
+    name: staff
+    internal: true
+    ipam:
+      config:
+        - subnet: 192.168.10.0/24
+  servers:
+    name: servers
+    internal: true
+    ipam:
+      config:
+        - subnet: 192.168.20.0/24
+  guest:
+    name: guest
+    internal: true
+    ipam:
+      config:
+        - subnet: 192.168.30.0/24
+
+services:
+  router:
+    image: officepc
+    container_name: router
+    hostname: router
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    networks:
+      uplink:
+        ipv4_address: 192.168.99.1
+    command:
+      - sh
+      - -c
+      - |
+        ip route add 192.168.10.0/24 via 192.168.99.2
+        ip route add 192.168.20.0/24 via 192.168.99.2
+        ip route add 192.168.30.0/24 via 192.168.99.2
+        exec sleep infinity
+
+  firewall:
+    image: officepc
+    container_name: firewall
+    hostname: firewall
+    cap_add: [NET_ADMIN]
+    sysctls:
+      net.ipv4.ip_forward: "1"
+    networks:
+      staff:
+        ipv4_address: 192.168.10.254
+      servers:
+        ipv4_address: 192.168.20.254
+      uplink:
+        ipv4_address: 192.168.99.2
+      guest:
+        ipv4_address: 192.168.30.254
+    command:
+      - sh
+      - -c
+      - |
+        ip route add default via 192.168.99.1
+        iptables -P FORWARD DROP
+        iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+        iptables -A FORWARD -s 192.168.10.0/24 -d 192.168.20.0/24 -j ACCEPT
+        iptables -A FORWARD -s 192.168.10.0/24 -d 192.168.99.0/24 -j ACCEPT
+        iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.99.0/24 -j ACCEPT
+        iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.10.0/24 -j DROP
+        iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.20.0/24 -j DROP
+        exec sleep infinity
+
+  pc1:
+    image: officepc
+    container_name: pc1
+    hostname: pc1
+    cap_add: [NET_ADMIN]
+    networks:
+      staff:
+        ipv4_address: 192.168.10.11
+    command:
+      - sh
+      - -c
+      - |
+        ip route add default via 192.168.10.254
+        echo "nameserver 192.168.20.12" > /etc/resolv.conf
+        exec sleep infinity
+
+  pc2:
+    image: officepc
+    container_name: pc2
+    hostname: pc2
+    cap_add: [NET_ADMIN]
+    networks:
+      staff:
+        ipv4_address: 192.168.10.12
+    command:
+      - sh
+      - -c
+      - |
+        ip route add default via 192.168.10.254
+        echo "nameserver 192.168.20.12" > /etc/resolv.conf
+        exec sleep infinity
+
+  guest1:
+    image: officepc
+    container_name: guest1
+    hostname: guest1
+    cap_add: [NET_ADMIN]
+    networks:
+      guest:
+        ipv4_address: 192.168.30.11
+    command:
+      - sh
+      - -c
+      - |
+        ip route add default via 192.168.30.254
+        echo "nameserver 192.168.20.12" > /etc/resolv.conf
+        exec sleep infinity
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    image: officeweb
+    container_name: web
+    hostname: web
+    cap_add: [NET_ADMIN]
+    networks:
+      servers:
+        ipv4_address: 192.168.20.11
+    volumes:
+      - ./site:/var/www/html:ro
+    command:
+      - sh
+      - -c
+      - |
+        ip route add default via 192.168.20.254
+        exec nginx -g 'daemon off;'
+
+  dns:
+    build:
+      context: .
+      dockerfile: Dockerfile.dns
+    image: officedns
+    container_name: dns
+    hostname: dns
+    cap_add: [NET_ADMIN]
+    networks:
+      servers:
+        ipv4_address: 192.168.20.12
+    volumes:
+      - ./dns/dnsmasq.conf:/etc/dnsmasq.conf:ro
+    command:
+      - sh
+      - -c
+      - |
+        ip route add default via 192.168.20.254
+        exec dnsmasq --no-daemon --conf-file=/etc/dnsmasq.conf
