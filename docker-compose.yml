@@ -11,7 +11,6 @@ name: office-network
 networks:
   uplink:
     name: uplink
-    internal: true
     ipam:
       config:
         - subnet: 192.168.99.0/24
@@ -53,6 +52,15 @@ services:
         ip route add 192.168.10.0/24 via 192.168.99.2
         ip route add 192.168.20.0/24 via 192.168.99.2
         ip route add 192.168.30.0/24 via 192.168.99.2
+
+        WAN_IF=$$(ip route show default | awk '{print $$5; exit}')
+
+        iptables -P FORWARD DROP
+        iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+        iptables -A FORWARD -s 192.168.0.0/16 -o $$WAN_IF -j ACCEPT
+
+        iptables -t nat -A POSTROUTING -s 192.168.0.0/16 -o $$WAN_IF -j MASQUERADE
+
         exec sleep infinity
 
   firewall:
@@ -75,14 +83,30 @@ services:
       - sh
       - -c
       - |
-        ip route add default via 192.168.99.1
+        # Send all outside traffic to the router (front door)
+        ip route replace default via 192.168.99.1
+
         iptables -P FORWARD DROP
+
+        # Allow return traffic
         iptables -A FORWARD -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
-        iptables -A FORWARD -s 192.168.10.0/24 -d 192.168.20.0/24 -j ACCEPT
-        iptables -A FORWARD -s 192.168.10.0/24 -d 192.168.99.0/24 -j ACCEPT
-        iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.99.0/24 -j ACCEPT
+
+        # Block guest from internal networks
         iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.10.0/24 -j DROP
         iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.20.0/24 -j DROP
+
+        # Allow staff to access servers
+        iptables -A FORWARD -s 192.168.10.0/24 -d 192.168.20.0/24 -j ACCEPT
+
+        # Block guest from any private 192.168.x.x network
+        iptables -A FORWARD -s 192.168.30.0/24 -d 192.168.0.0/16 -j DROP
+
+        # Allow guest to reach the WAN (everything else)
+        iptables -A FORWARD -s 192.168.30.0/24 -j ACCEPT
+
+        # Staff cannot reach the WAN (explicit rule so the counter shows blocked attempts)
+        iptables -A FORWARD -s 192.168.10.0/24 -j DROP
+
         exec sleep infinity
 
   pc1:
@@ -130,7 +154,7 @@ services:
       - -c
       - |
         ip route add default via 192.168.30.254
-        echo "nameserver 192.168.20.12" > /etc/resolv.conf
+        echo "nameserver 1.1.1.1" > /etc/resolv.conf
         exec sleep infinity
 
   web:
