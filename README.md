@@ -69,7 +69,7 @@ A simulated private office network built using Docker Compose. It separates staf
 
 ```bash
 docker exec pc1 curl http://web.office.lan      # works: staff can reach the website
-docker exec guest1 ping -c 2 1.1.1.1            # works: guest can reach the internet
+docker exec guest1 ping -c 2 google.com            # works: guest can reach the internet
 docker exec pc1 ping -c 2 -W 2 1.1.1.1          # fails: staff have no internet access
 docker exec guest1 ping -c 2 -W 2 192.168.10.11 # fails: guest cannot reach staff
 ```
